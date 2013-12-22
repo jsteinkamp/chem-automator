@@ -1,0 +1,288 @@
+import networkx as nx
+import xml
+import pybel
+import openbabel
+import PIL
+import sys
+from PIL import ImageFont
+from PIL import Image
+from PIL import ImageDraw
+from PIL import ImageTk
+import time, Tkinter
+import copy
+class molecule():
+	def __init__(self,mol):
+		self.react = {}
+		self.m = mol
+		self.getFGs()
+		
+	def getFGs(self):
+		self.m.addh()
+#		self.m.OBMol.AddHydrogens()
+		for fg in fgdict:
+			self.react[fg] = pybel.Smarts(fgdict[fg]).findall(self.m)
+		self.m.removeh()
+		
+	def add_atom(mol,atomicnum):
+		newatom = mol.m.OBMol.NewAtom()
+		newatom.SetAtomicNum(atomicnum)
+		return newatom.GetIdx()
+	def kill_atom(mol,idx):
+		mol.m.OBMol.DeleteAtom(mol.m.OBMol.GetAtomById(idx-1))
+	def copy_frag(mol,frag):
+		newidx = {}
+		for atom in openbabel.OBMolAtomIter(frag.m.OBMol):
+			natom = mol.m.OBMol.NewAtom()
+			newidx[atom.GetIdx()] = natom.GetIdx()
+			natom.SetAtomicNum(atom.GetAtomicNum())
+		for bond in openbabel.OBMolBondIter(frag.m.OBMol):
+			beg = bond.GetBeginAtomIdx()
+			end = bond.GetEndAtomIdx()
+			mol.m.OBMol.AddBond(newidx[beg],newidx[end],bond.GetBondOrder())
+		return newidx
+	
+	def add_bond(mol,begindex,endex,order=1):
+		bond = mol.m.OBMol.GetBond(begindex,endex)
+		if bond == None:
+			mol.m.OBMol.AddBond(begindex,endex,order)
+		else:
+			bond.SetBondOrder(bond.GetBondOrder()+1)
+	def break_bond(mol,begindex,endex):
+		bond = mol.m.OBMol.GetBond(begindex,endex)
+		if bond == None:
+			print "Error. No such bond exists"
+		else:
+			if bond.GetBondOrder() > 1:
+				bond.SetBondOrder(bond.GetBondOrder()-1)
+			else:
+				mol.m.OBMol.DeleteBond(bond)
+		
+	def connect_frag(mol,othermol,idx1,idx2):
+		newidxs = mol.copy_frag(othermol)
+		print newidxs
+		mol.m.OBMol.AddBond(idx1,newidxs[idx2],1)
+		return newidxs
+		
+	def add_from_smile(mol,smile,idx1):
+		mol.connect_frag(mol_from_smile(smile),idx1,1)
+		
+	def draw(self):	
+		self.m.removeh()
+		self.m.draw(0,0,1,0)
+		# font = ImageFont.truetype("Arial-Bold.ttf",14)
+		font = ImageFont.truetype("Arial.ttf",10)
+		img=Image.new("RGBA", (500,250),(255,255,255))
+		draw = ImageDraw.Draw(img)
+		for atom in self.m.atoms:
+			if (not atom.type[0] == 'C') or (atom.type[1] == 'l'):
+				if atom.type[1].isdigit():
+					strg = atom.type[0]
+				else:
+					strg = atom.type[0] + atom.type[1]
+				draw.text((atom.coords[0]*10 + 96.5, atom.coords[1]*10 + 96),strg,(0,0,0),font=font)
+			draw.text((atom.coords[0]*10,atom.coords[1]*10),str(atom.OBAtom.GetIdx()),(0,255,0),font=font)
+		for bond in openbabel.OBMolBondIter(self.m.OBMol):
+			bcoord = self.m.atoms[bond.GetBeginAtomIdx()-1].coords
+			ecoord = self.m.atoms[bond.GetEndAtomIdx()-1].coords
+			if not self.m.atoms[bond.GetBeginAtomIdx()-1].type[0] == 'C':
+				bcoord = [bcoord[0] - .4*(bcoord[0]-ecoord[0]),bcoord[1]-.4*(bcoord[1]-ecoord[1])]
+			if not self.m.atoms[bond.GetEndAtomIdx()-1].type[0] == 'C':
+				ecoord = [ecoord[0] - .4*(ecoord[0]-bcoord[0]),ecoord[1]-.4*(ecoord[1]-bcoord[1])]
+			draw.line([bcoord[0]*10+100,bcoord[1]*10+100,ecoord[0]*10+100,ecoord[1]*10+100],fill='black')
+			if (bond.GetBondOrder() > 1):
+				newdy = bcoord[0] - ecoord[0]
+				newdx = ecoord[1] - bcoord[1]
+				draw.line([bcoord[0]*10+100+(newdx*3),bcoord[1]*10+100+(newdy*3),ecoord[0]*10+100+(newdx*3),ecoord[1]*10+100+(newdy*3)],fill='black')
+				if bond.GetBondOrder() == 3:
+					draw.line([bcoord[0]*10+100-(newdx*3),bcoord[1]*10+100-(newdy*3),ecoord[0]*10+100-(newdx*3),ecoord[1]*10+100-(newdy*3)],fill='black')
+		img.show()
+		
+def mol_from_smile(smile):
+	return molecule(pybel.readstring("smi",smile))
+	
+fgdict = {
+"alcohol":"[CX4][OX2;H]",
+"la-alcohol":"[OX2][Mg][Br]",
+"acyl halide":"[CX3](=[OX1])[F,Cl,Br,I]",
+"aldehyde":"[#6][CX3](=O)[#1]",
+"alkene": "[CX3]=[CX3]",
+"alkyne": "[CX2]#[CX2]",
+"ahalide": "[#6][F,Cl,Br,I]",
+"amine":"[NX3;H2,H1;!$(NC=O);!$(NS)]",
+"cbxacid": "[CX3](=O)[OX2H1]", 
+"carbonyl-l": "[CX3]=[OX1]",
+"carbonyl-h": "[#6][CX3](=O)[#1,#6]",
+"grignard": "C[Mg][Br]",
+"ketone":"[#6][CX3](=O)[#6]",
+"nitrile":"C#N",
+"phenyl": "c0ccccc0"
+}	
+
+def grig_carbonyl(carbonyl,grig,carb_inds,grig_inds):
+	grig.break_bond(grig_inds[0],grig_inds[1])
+	new_inds = carbonyl.connect_frag(grig,carb_inds[1],grig_inds[0])
+	carbonyl.break_bond(carb_inds[1],carb_inds[2])
+	carbonyl.add_bond(carb_inds[2],new_inds[grig_inds[1]])
+	
+def alc_to_carb(alcohol,alcohol_inds):
+	if alcohol.m.OBMol.GetAtomById(alcohol_inds[0]-1).GetValence() < 4:
+		alcohol.add_bond(alcohol_inds[0],alcohol_inds[1])
+
+def quench(grigd,grigd_inds):
+	grigd.break_bond(grigd_inds[0],grigd_inds[1])
+
+def brominalcohol(alcohol,alcohol_inds):
+	alcohol.break_bond(alcohol_inds[0],alcohol_inds[1])
+	idx = alcohol.add_atom(35)
+	alcohol.add_bond(alcohol_inds[0],idx)
+	alcohol.kill_atom(alcohol_inds[1])
+	
+def chlorinalcohol(alcohol,alcohol_inds):
+	alcohol.break_bond(alcohol_inds[0],alcohol_inds[1])
+	idx = alcohol.add_atom(17)
+	alcohol.add_bond(alcohol_inds[0],idx)
+	alcohol.kill_atom(alcohol_inds[1])
+
+def chlorinacid(acid,acid_inds):
+	acid.break_bond(acid_inds[0],acid_inds[2])
+	idx = acid.add_atom(17)
+	acid.add_bond(acid_inds[0],idx)
+	acid.kill_atom(acid_inds[2])
+	
+def alcoacid(alcohol,alcohol_inds):
+	if alcohol.m.OBMol.GetAtomById(alcohol_inds[0]-1).GetValence() < 3:
+		idx = alcohol.add_atom(8)
+		alcohol.add_bond(alcohol_inds[0],idx)
+		alcohol.add_bond(alcohol_inds[0],idx)
+	else:
+		alc_to_carb(alcohol,alcohol_inds)
+		
+def aldeacid(ald,ald_inds):
+	print "UPDATING BICH"
+	idx = ald.add_atom(8)
+	ald.add_bond(ald_inds[1],idx)
+	
+def acidalc(cbx,cbx_inds):
+	cbx.break_bond(cbx_inds[0],cbx_inds[1])
+	cbx.break_bond(cbx_inds[0],cbx_inds[1])
+	cbx.kill_atom(cbx_inds[1])
+	
+def carbalc(carb,carb_inds):
+	carb.break_bond(carb_inds[1],carb_inds[2])
+	
+	
+reactivity_dict = {"grignard": {"aldehyde": grig_carbonyl, "ketone": grig_carbonyl}}
+	
+templatedict = {
+"DMSO, COCl2, Et3N": {"alcohol": alc_to_carb},
+"PBr3": {"alcohol": brominalcohol},
+"SOCl2": {"alcohol": chlorinalcohol,"cbxacid": chlorinacid, "acyl halide": acidalc},
+"H2CrO4, H2SO4": {"alcohol": alcoacid, "aldehyde": aldeacid},
+#"conc H2SO4": ["elimination"],
+"NaBH4": {"aldehyde": carbalc, "ketone": carbalc},
+"H+ workup": {"la-alcohol": quench, "grignard": quench},
+"LAH": {"aldehyde": carbalc, "ketone": carbalc, "cbxacid": acidalc, "acyl halide": acidalc}
+}
+
+def react_wsmile(sm_mol,added):
+	if added in templatedict:
+		for possible in templatedict[added]:
+			for instance in sm_mol.react[possible]:
+				templatedict[added][possible](sm_mol,instance)
+				sm_mol.getFGs()
+				print sm_mol.react
+	else:		
+		added_mol = molecule(pybel.readstring("smi",added))
+		added_mol.m.removeh()
+		for fg in added_mol.react:
+			for instance in added_mol.react[fg]:
+				for possible in reactivity_dict[fg]:
+		#			print sm_mol.react["aldehyde"]
+					for instancesm in sm_mol.react[possible]:
+						reactivity_dict[fg][possible](sm_mol,added_mol,instancesm,instance)
+						sm_mol.getFGs()
+					
+def boxproblem_forward(sm,steps):
+	for step in steps:
+		sm = react_wsmile(sm,step)
+	return sm
+	
+class Application(Tkinter.Frame):
+    def mol_load(self,fromline=True):
+		if (fromline):
+			line = self.e.get()
+			self.disp_mol = molecule(pybel.readstring("smi",line))
+		self.disp_mol.m.draw(0,"temp.png",1,0)
+		time.sleep(.01)
+		try:
+			image1.close()
+		except:
+			pass
+		image1 = Image.open("temp.png")
+		print image1
+		tkpi = ImageTk.PhotoImage(image1)
+		try:
+			label_image.configure(image = tkpi)
+		except:
+			label_image = Tkinter.Label(self.master, image=tkpi)
+		label_image.im = tkpi
+		label_image.grid(row=1,column=3,columnspan=6, rowspan=6, sticky=Tkinter.S+Tkinter.E, padx=50, pady=50)
+		self.master.title("Image loaded!")
+		self.generate_rxns()
+		
+    def generate_rxns(self):
+		for n in self.nb:
+			n.destroy()
+		self.nb = []
+		cur_row = 1
+		for mol in templatedict:
+			can_react = False
+			for possible in templatedict[mol]:
+				if (can_react):
+					break
+				for instance in self.disp_mol.react[possible]:
+					newb = Tkinter.Button(self,text=mol,command=lambda mol=mol: self.window_react(self.disp_mol,mol))
+					cur_row = cur_row + 1
+					self.nb.append(newb)
+					self.nb[-1].grid(row=cur_row,column=3)
+					can_react = True
+					break
+		
+    def window_react(self,firstmol,smile):
+		react_wsmile(firstmol,smile)
+		self.update()
+		
+    def update(self):
+		self.mol_load(fromline=False)
+		
+    def createWidgets(self):
+        self.QUIT = Tkinter.Button(self)
+        self.QUIT["text"] = "QUIT"
+        self.QUIT["fg"]   = "red"
+        self.QUIT["command"] =  self.quit
+
+        self.QUIT.grid(column=0,row=0)
+
+        self.load = Tkinter.Button(self)
+        self.load["text"] = "load mol",
+        self.load["command"] = self.mol_load
+
+        self.load.grid(column=1,row=0)
+		
+        self.e = Tkinter.Entry(self)
+        self.e.grid(column=2,row=0)
+
+    def __init__(self, master=None):
+        Tkinter.Frame.__init__(self, master)
+        self.master = master
+        master.geometry("%dx%d+0+0" % (700, 400))
+        self.pack()
+        self.createWidgets()
+        self.nb = []
+
+top = Tkinter.Tk()
+root = Tkinter.Toplevel()
+top.withdraw()
+app = Application(master=root)
+app.mainloop()
+root.destroy()	
