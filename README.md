@@ -1,4 +1,9 @@
 chem-automator
 ==============
 
-How much of Chem 20/30 work can be done automatically? 
+Goals:
+-solve box problems
+-solve syntheses
+-maybe solve mechanisms
+-generate syntheses
+-maybe generate mechanism problems
