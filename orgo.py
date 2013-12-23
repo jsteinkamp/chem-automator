@@ -17,38 +17,44 @@ class molecule():
 		self.getFGs()
 		
 	def getFGs(self):
+		for fg in fgdict:
+			self.react[fg] = []
 		self.m.addh()
 #		self.m.OBMol.AddHydrogens()
 		for fg in fgdict:
-			self.react[fg] = pybel.Smarts(fgdict[fg]).findall(self.m)
+			indices = pybel.Smarts(fgdict[fg]).findall(self.m)
+			for indset in indices:
+				self.react[fg].append([self.m.atoms[ind-1].OBAtom for ind in indset])
 		self.m.removeh()
+		self.log()
 		
 	def add_atom(mol,atomicnum):
 		newatom = mol.m.OBMol.NewAtom()
 		newatom.SetAtomicNum(atomicnum)
-		return newatom.GetIdx()
-	def kill_atom(mol,idx):
-		mol.m.OBMol.DeleteAtom(mol.m.OBMol.GetAtomById(idx-1))
+		return newatom
+	def kill_atom(mol,atom):
+		mol.m.OBMol.DeleteAtom(atom)
+		mol.getFGs()
 	def copy_frag(mol,frag):
 		newidx = {}
 		for atom in openbabel.OBMolAtomIter(frag.m.OBMol):
-			natom = mol.m.OBMol.NewAtom()
+			natom = mol.AddAtom(atom.GetAtomicNum())
 			newidx[atom.GetIdx()] = natom.GetIdx()
-			natom.SetAtomicNum(atom.GetAtomicNum())
 		for bond in openbabel.OBMolBondIter(frag.m.OBMol):
 			beg = bond.GetBeginAtomIdx()
 			end = bond.GetEndAtomIdx()
 			mol.m.OBMol.AddBond(newidx[beg],newidx[end],bond.GetBondOrder())
 		return newidx
 	
-	def add_bond(mol,begindex,endex,order=1):
-		bond = mol.m.OBMol.GetBond(begindex,endex)
+	def add_bond(mol,beginatom,endatom,order=1):
+		bond = mol.m.OBMol.GetBond(beginatom.GetIdx(),endatom.GetIdx())
 		if bond == None:
-			mol.m.OBMol.AddBond(begindex,endex,order)
+			mol.m.OBMol.AddBond(beginatom.GetIdx(),endatom.GetIdx(),order)
 		else:
 			bond.SetBondOrder(bond.GetBondOrder()+1)
-	def break_bond(mol,begindex,endex):
-		bond = mol.m.OBMol.GetBond(begindex,endex)
+	def break_bond(mol,beginatom,endatom):
+		print beginatom.GetAtomicNum(), endatom.GetAtomicNum()
+		bond = mol.m.OBMol.GetBond(beginatom,endatom)
 		if bond == None:
 			print "Error. No such bond exists"
 		else:
@@ -59,13 +65,30 @@ class molecule():
 		
 	def connect_frag(mol,othermol,idx1,idx2):
 		newidxs = mol.copy_frag(othermol)
-		print newidxs
 		mol.m.OBMol.AddBond(idx1,newidxs[idx2],1)
 		return newidxs
 		
-	def add_from_smile(mol,smile,idx1):
-		mol.connect_frag(mol_from_smile(smile),idx1,1)
+	def add_from_smile(mol,smile,atom):
+		mol.connect_frag(mol_from_smile(smile),atom.GetIdx(),1)
 		
+	def log(self):
+		for atom in openbabel.OBMolAtomIter(self.m.OBMol):
+			tstr = "atom " + str(atom.GetIdx()) + " is " + str(atom.GetAtomicNum()) 
+			print tstr
+		for bond in openbabel.OBMolBondIter(self.m.OBMol):
+			tstr = "bond connects " + str(bond.GetBeginAtomIdx()) + " to " + str(bond.GetEndAtomIdx())
+			print tstr
+		for fg in self.react:
+			if len(self.react[fg]) > 0:
+				print fg
+				i = 0
+			for inst in self.react[fg]:
+				j = 0
+				i = i + 1
+				print "Instance" + str(i)
+				for ind in inst:
+					print "field" + str(j) + "is atom" + str(ind.GetIdx()) + " which is " + str(ind.GetAtomicNum())
+					j = j + 1
 	def draw(self):	
 		self.m.removeh()
 		self.m.draw(0,0,1,0)
@@ -104,14 +127,12 @@ fgdict = {
 "alcohol":"[CX4][OX2;H]",
 "la-alcohol":"[OX2][Mg][Br]",
 "acyl halide":"[CX3](=[OX1])[F,Cl,Br,I]",
-"aldehyde":"[#6][CX3](=O)[#1]",
+"aldehyde":"[#6][CX3;H1](=O)",
 "alkene": "[CX3]=[CX3]",
 "alkyne": "[CX2]#[CX2]",
-"ahalide": "[#6][F,Cl,Br,I]",
+"ahalide": "[CX4][F,Cl,Br,I]",
 "amine":"[NX3;H2,H1;!$(NC=O);!$(NS)]",
-"cbxacid": "[CX3](=O)[OX2H1]", 
-"carbonyl-l": "[CX3]=[OX1]",
-"carbonyl-h": "[#6][CX3](=O)[#1,#6]",
+"cbxacid": "[CX3](=O)[OX2;H1]",
 "grignard": "C[Mg][Br]",
 "ketone":"[#6][CX3](=O)[#6]",
 "nitrile":"C#N",
@@ -125,7 +146,7 @@ def grig_carbonyl(carbonyl,grig,carb_inds,grig_inds):
 	carbonyl.add_bond(carb_inds[2],new_inds[grig_inds[1]])
 	
 def alc_to_carb(alcohol,alcohol_inds):
-	if alcohol.m.OBMol.GetAtomById(alcohol_inds[0]-1).GetValence() < 4:
+	if alcohol_inds[0].GetValence() < 4:
 		alcohol.add_bond(alcohol_inds[0],alcohol_inds[1])
 
 def quench(grigd,grigd_inds):
@@ -150,15 +171,13 @@ def chlorinacid(acid,acid_inds):
 	acid.kill_atom(acid_inds[2])
 	
 def alcoacid(alcohol,alcohol_inds):
-	if alcohol.m.OBMol.GetAtomById(alcohol_inds[0]-1).GetValence() < 3:
+	if alcohol_inds[0].GetValence() < 3:
 		idx = alcohol.add_atom(8)
-		alcohol.add_bond(alcohol_inds[0],idx)
-		alcohol.add_bond(alcohol_inds[0],idx)
+		alcohol.add_bond(alcohol_inds[0],idx,order=2)
 	else:
 		alc_to_carb(alcohol,alcohol_inds)
 		
 def aldeacid(ald,ald_inds):
-	print "UPDATING BICH"
 	idx = ald.add_atom(8)
 	ald.add_bond(ald_inds[1],idx)
 	
@@ -176,7 +195,7 @@ reactivity_dict = {"grignard": {"aldehyde": grig_carbonyl, "ketone": grig_carbon
 templatedict = {
 "DMSO, COCl2, Et3N": {"alcohol": alc_to_carb},
 "PBr3": {"alcohol": brominalcohol},
-"SOCl2": {"alcohol": chlorinalcohol,"cbxacid": chlorinacid, "acyl halide": acidalc},
+"SOCl2": {"alcohol": chlorinalcohol,"cbxacid": chlorinacid},
 "H2CrO4, H2SO4": {"alcohol": alcoacid, "aldehyde": aldeacid},
 #"conc H2SO4": ["elimination"],
 "NaBH4": {"aldehyde": carbalc, "ketone": carbalc},
@@ -188,9 +207,8 @@ def react_wsmile(sm_mol,added):
 	if added in templatedict:
 		for possible in templatedict[added]:
 			for instance in sm_mol.react[possible]:
+				print "HEY"
 				templatedict[added][possible](sm_mol,instance)
-				sm_mol.getFGs()
-				print sm_mol.react
 	else:		
 		added_mol = molecule(pybel.readstring("smi",added))
 		added_mol.m.removeh()
@@ -200,8 +218,7 @@ def react_wsmile(sm_mol,added):
 		#			print sm_mol.react["aldehyde"]
 					for instancesm in sm_mol.react[possible]:
 						reactivity_dict[fg][possible](sm_mol,added_mol,instancesm,instance)
-						sm_mol.getFGs()
-					
+	sm_mol.getFGs()
 def boxproblem_forward(sm,steps):
 	for step in steps:
 		sm = react_wsmile(sm,step)
@@ -249,6 +266,8 @@ class Application(Tkinter.Frame):
 					break
 		
     def window_react(self,firstmol,smile):
+	#	firstmol.log()
+		print "reacting with" + smile
 		react_wsmile(firstmol,smile)
 		self.update()
 		
