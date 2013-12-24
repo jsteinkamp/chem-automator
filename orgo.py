@@ -35,16 +35,21 @@ class molecule():
 	def kill_atom(mol,atom):
 		mol.m.OBMol.DeleteAtom(atom)
 		mol.getFGs()
-	def copy_frag(mol,frag):
+	def throw_in_pot(mol,added_smile):
 		newidx = {}
-		for atom in openbabel.OBMolAtomIter(frag.m.OBMol):
-			natom = mol.AddAtom(atom.GetAtomicNum())
+		m = pybel.readstring("smi",added_smile)
+		for atom in openbabel.OBMolAtomIter(m.OBMol):
+			natom = mol.add_atom(atom.GetAtomicNum())
 			newidx[atom.GetIdx()] = natom.GetIdx()
-		for bond in openbabel.OBMolBondIter(frag.m.OBMol):
+		for bond in openbabel.OBMolBondIter(m.OBMol):
 			beg = bond.GetBeginAtomIdx()
 			end = bond.GetEndAtomIdx()
 			mol.m.OBMol.AddBond(newidx[beg],newidx[end],bond.GetBondOrder())
-		return newidx
+	
+	def cleanup(mol):
+		frags = mol.m.OBMol.Separate()
+		keep = max(frags, key=lambda frag: frag.NumAtoms())
+		mol.m.OBMol = keep
 	
 	def add_bond(mol,beginatom,endatom,order=1):
 		bond = mol.m.OBMol.GetBond(beginatom.GetIdx(),endatom.GetIdx())
@@ -63,11 +68,6 @@ class molecule():
 				bond.SetBondOrder(bond.GetBondOrder()-1)
 			else:
 				mol.m.OBMol.DeleteBond(bond)
-		
-	def connect_frag(mol,othermol,idx1,idx2):
-		newidxs = mol.copy_frag(othermol)
-		mol.m.OBMol.AddBond(idx1,newidxs[idx2],1)
-		return newidxs
 		
 	def add_from_smile(mol,smile,atom):
 		mol.connect_frag(mol_from_smile(smile),atom.GetIdx(),1)
@@ -136,15 +136,18 @@ fgdict = {
 "cbxacid": "[CX3](=O)[OX2;H1]",
 "grignard": "C[Mg][Br]",
 "ketone":"[#6][CX3](=O)[#6]",
+"epoxide":"C1CO1",
 "nitrile":"C#N",
-"phenyl": "c0ccccc0"
+"phenyl": "c0ccccc0",
+"phosphylide": "P=C"
 }	
 
-def grig_carbonyl(carbonyl,grig,carb_inds,grig_inds):
-	grig.break_bond(grig_inds[0],grig_inds[1])
-	new_inds = carbonyl.connect_frag(grig,carb_inds[1],grig_inds[0])
+def grig_carbonyl(carbonyl,carb_inds,grig_inds):
+	carbonyl.break_bond(grig_inds[0],grig_inds[1])
 	carbonyl.break_bond(carb_inds[1],carb_inds[2])
-	carbonyl.add_bond(carb_inds[2],new_inds[grig_inds[1]])
+	carbonyl.add_bond(grig_inds[0],carb_inds[1])
+	carbonyl.add_bond(carb_inds[2],grig_inds[1])
+
 	
 def alc_to_carb(alcohol,alcohol_inds):
 	if alcohol_inds[0].GetValence() < 4:
@@ -152,6 +155,8 @@ def alc_to_carb(alcohol,alcohol_inds):
 
 def quench(grigd,grigd_inds):
 	grigd.break_bond(grigd_inds[0],grigd_inds[1])
+	grigd.kill_atom(grigd_inds[1])
+	grigd.kill_atom(grigd_inds[2])
 
 def brominalcohol(alcohol,alcohol_inds):
 	alcohol.break_bond(alcohol_inds[0],alcohol_inds[1])
@@ -231,10 +236,34 @@ def form_grig(ahal,ahal_inds):
 	ahal.break_bond(ahal_inds[0],ahal_inds[1])
 	ahal.add_bond(ahal_inds[0],newmg)
 	ahal.add_bond(ahal_inds[1],newmg)
+
+def epoxidation(alk,alk_inds):
+	newo = alk.add_atom(8)
+	alk.break_bond(alk_inds[0],alk_inds[1])
+	alk.add_bond(alk_inds[0],newo)
+	alk.add_bond(alk_inds[1],newo)
+
+def ylidepox(carb,carb_inds):
+	for i in xrange(100):
+		print "FUCK"
+	newc = carb.add_atom(6)
+	carb.break_bond(carb_inds[1],carb_inds[2])
+	carb.add_bond(newc,carb_inds[1])
+	carb.add_bond(newc,carb_inds[2])
+
+def wittig(thing,carb_inds,ylide_inds):
+	thing.break_bond(ylide_inds[1],ylide_inds[0])
+	thing.break_bond(ylide_inds[1],ylide_inds[0])
+	thing.add_bond(carb_inds[1],ylide_inds[1],order=2)
+	thing.add_bond(ylide_inds[0],carb_inds[2],order=2)
+	thing.break_bond(carb_inds[1],carb_inds[2])
+	thing.break_bond(carb_inds[1],carb_inds[2])
 	
-reactivity_dict = {"grignard": {"aldehyde": grig_carbonyl, "ketone": grig_carbonyl}}
-	
+reactivity_dict = {"grignard": {"aldehyde": grig_carbonyl, "ketone": grig_carbonyl, "epoxide": grig_carbonyl}, "phosphylide":{"aldehyde": wittig, "ketone": wittig}}
+
 templatedict = {
+"MCPBA": {"alkene":epoxidation},
+"Me-S+Me2":{"aldehyde":ylidepox,"ketone":ylidepox},
 "Mg0":{"ahalide":form_grig},
 "1. O3 2. Me2S":{"alkene":ozonolysis},
 "H2NNH2,KOH":{"aldehyde":wolfkish,"ketone":wolfkish},
@@ -247,25 +276,42 @@ templatedict = {
 "NaBH4": {"aldehyde": carbalc, "ketone": carbalc},
 "H+ workup": {"la-alcohol": quench, "grignard": quench},
 "LAH": {"aldehyde": carbalc, "ketone": carbalc, "cbxacid": acidalc, "acyl halide": acidalc},
-"Wittig": {"carbonyl": wittig}
+}
+
+usercustomdict = {
+"[Br][Mg]": ["aldehyde","ketone","epoxide"], "Carbonyl compound": ["grignard"],"PPh3+...": ["aldehyde","ketone"], "Carbonyl": ["phosphylide"]
 }
 
 def react_wsmile(sm_mol,added):
 	if added in templatedict:
 		for possible in templatedict[added]:
 			for instance in sm_mol.react[possible]:
+				print instance, possible
 				print "HEY"
 				templatedict[added][possible](sm_mol,instance)
 	else:		
-		added_mol = molecule(pybel.readstring("smi",added))
-		added_mol.m.removeh()
-		for fg in added_mol.react:
-			for instance in added_mol.react[fg]:
-				for possible in reactivity_dict[fg]:
-		#			print sm_mol.react["aldehyde"]
-					for instancesm in sm_mol.react[possible]:
-						reactivity_dict[fg][possible](sm_mol,added_mol,instancesm,instance)
+		reacted = True
+		while (reacted):
+			sm_mol.throw_in_pot(added)
+			print "REACTING"
+			reacted = False
+			sm_mol.getFGs()
+			for fg in sm_mol.react:
+				print fg
+				for instance in sm_mol.react[fg]:
+					try:
+						for possible in reactivity_dict[fg]:
+			#			print sm_mol.react["aldehyde"]
+							for instancesm in sm_mol.react[possible]:
+								if not reacted:
+									reactivity_dict[fg][possible](sm_mol,instancesm,instance)
+									reacted = True
+								
+					except KeyError:
+						pass
+		sm_mol.cleanup()
 	sm_mol.getFGs()
+	
 def boxproblem_forward(sm,steps):
 	for step in steps:
 		sm = react_wsmile(sm,step)
@@ -297,7 +343,10 @@ class Application(Tkinter.Frame):
     def generate_rxns(self):
 		for n in self.nb:
 			n.destroy()
+		for t in self.textb:
+			t.destroy()
 		self.nb = []
+		self.textb = []
 		cur_row = 1
 		for mol in templatedict:
 			can_react = False
@@ -311,7 +360,21 @@ class Application(Tkinter.Frame):
 					self.nb[-1].grid(row=cur_row,column=3)
 					can_react = True
 					break
-		
+		for mol in usercustomdict:
+			can_react = False
+			for possible in usercustomdict[mol]:
+				if (can_react):
+					break
+				for instance in self.disp_mol.react[possible]:
+					cur_row = cur_row + 1
+					txtb = Tkinter.Entry(self);
+					txtb.grid(row=cur_row,column=4)
+					self.textb.append(txtb)
+					newb = Tkinter.Button(self,text=mol,command = lambda txtb=txtb: self.window_react(self.disp_mol,txtb.get()))
+					self.nb.append(newb)
+					self.nb[-1].grid(row=cur_row,column=3)
+					can_react = True
+					break
     def window_react(self,firstmol,smile):
 	#	firstmol.log()
 		print "reacting with" + smile
@@ -345,6 +408,7 @@ class Application(Tkinter.Frame):
         self.pack()
         self.createWidgets()
         self.nb = []
+        self.textb = []
 
 top = Tkinter.Tk()
 root = Tkinter.Toplevel()
