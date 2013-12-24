@@ -51,6 +51,7 @@ class molecule():
 		if bond == None:
 			mol.m.OBMol.AddBond(beginatom.GetIdx(),endatom.GetIdx(),order)
 		else:
+			print "updating"
 			bond.SetBondOrder(bond.GetBondOrder()+1)
 	def break_bond(mol,beginatom,endatom):
 		print beginatom.GetAtomicNum(), endatom.GetAtomicNum()
@@ -189,18 +190,64 @@ def acidalc(cbx,cbx_inds):
 def carbalc(carb,carb_inds):
 	carb.break_bond(carb_inds[1],carb_inds[2])
 	
+def e1elim(alc,alc_inds):
+	max_val = 0
+	best = None
+	for atom in openbabel.OBAtomAtomIter(alc_inds[0]):
+		if atom.GetAtomicNum() == 6 and atom.GetValence() < 4 and atom.GetValence() > max_val:
+			max_val = atom.GetValence()
+			best = atom
+	if max_val == 0:
+		print "No beta hydrogens, foo"
+	else:
+		print max_val, best
+		alc.break_bond(alc_inds[0],alc_inds[1])
+		alc.add_bond(best,alc_inds[0],2)
+		alc.kill_atom(alc_inds[1])
+		
+def wolfkish(carbonyl,carbonyl_inds):
+	carbonyl.break_bond(carbonyl_inds[1],carbonyl_inds[2])
+	carbonyl.break_bond(carbonyl_inds[1],carbonyl_inds[2])
+	carbonyl.kill_atom(carbonyl_inds[2])
+	
+def antimarkovoh(alk,alk_inds):
+	alk.break_bond(alk_inds[0],alk_inds[1])
+	newoh = alk.add_atom(8)
+	if (alk_inds[0].GetValence() < alk_inds[1].GetValence()):
+		alk.add_bond(alk_inds[0],newoh)
+	else:
+		alk.add_bond(alk_inds[1],newoh)
+
+def ozonolysis(alk,alk_inds):
+	alk.break_bond(alk_inds[0],alk_inds[1])
+	alk.break_bond(alk_inds[0],alk_inds[1])
+	newoh1 = alk.add_atom(8)
+	newoh2 = alk.add_atom(8)
+	alk.add_bond(alk_inds[0],newoh1,2)
+	alk.add_bond(alk_inds[1],newoh2,2)
+
+def form_grig(ahal,ahal_inds):
+	newmg = ahal.add_atom(12)
+	ahal.break_bond(ahal_inds[0],ahal_inds[1])
+	ahal.add_bond(ahal_inds[0],newmg)
+	ahal.add_bond(ahal_inds[1],newmg)
 	
 reactivity_dict = {"grignard": {"aldehyde": grig_carbonyl, "ketone": grig_carbonyl}}
 	
 templatedict = {
+"Mg0":{"ahalide":form_grig},
+"1. O3 2. Me2S":{"alkene":ozonolysis},
+"H2NNH2,KOH":{"aldehyde":wolfkish,"ketone":wolfkish},
+"1. BH3, THF\n 2. H2O2,NaOH":{"alkene":antimarkovoh},
 "DMSO, COCl2, Et3N": {"alcohol": alc_to_carb},
 "PBr3": {"alcohol": brominalcohol},
 "SOCl2": {"alcohol": chlorinalcohol,"cbxacid": chlorinacid},
 "H2CrO4, H2SO4": {"alcohol": alcoacid, "aldehyde": aldeacid},
-#"conc H2SO4": ["elimination"],
+"conc H2SO4": {"alcohol": e1elim},
 "NaBH4": {"aldehyde": carbalc, "ketone": carbalc},
 "H+ workup": {"la-alcohol": quench, "grignard": quench},
-"LAH": {"aldehyde": carbalc, "ketone": carbalc, "cbxacid": acidalc, "acyl halide": acidalc}
+"LAH": {"aldehyde": carbalc, "ketone": carbalc, "cbxacid": acidalc, "acyl halide": acidalc},
+"Wittig": {"carbonyl": wittig}
 }
 
 def react_wsmile(sm_mol,added):
